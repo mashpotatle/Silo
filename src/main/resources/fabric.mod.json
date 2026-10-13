@@ -1,0 +1,21 @@
+{
+	"schemaVersion": 1,
+	"id": "silo",
+	"version": "${version}",
+	"name": "Silo",
+	"description": "A client-side, scriptable Minecraft task automation mod.",
+	"authors": ["Silo"],
+	"license": "CC0-1.0",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"com.silo.client.SiloClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
