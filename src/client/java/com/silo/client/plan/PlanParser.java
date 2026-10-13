@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static com.silo.client.plan.PlanAction.Button;
@@ -15,6 +16,7 @@ public final class PlanParser {
 	public static final int MAX_ACTIONS = 100;
 	public static final int MAX_ACTION_TICKS = 1_200;
 	private static final Pattern ACTION_HEADER = Pattern.compile(":Action_[A-Za-z0-9_-]+");
+	private static final Pattern OPTION_TOKEN = Pattern.compile("\\[[^\\]]*]|[^\\s\\[\\]]+|[\\[\\]]");
 
 	private PlanParser() {
 	}
@@ -96,19 +98,19 @@ public final class PlanParser {
 				if (command.startsWith(" ")) {
 					throw error(i, "action lines must use exactly four leading spaces.");
 				}
-				String[] parts = command.split("\\s+");
+				String[] parts = splitOptions(command);
 				switch (parts[0].toLowerCase(Locale.ROOT)) {
 					case "sleep" -> {
 						if (!concurrentActions.isEmpty() || sawSleep) {
 							throw error(i, "sleep must appear once before the concurrent actions.");
 						}
-						delayTicks = parseTicksAtLine(parts, 1, i, "sleep <ticks>");
+						delayTicks = parseTicksAtLine(parts, 1, i, "sleep [ticks]");
 						sawSleep = true;
 						i++;
 					}
 					case "hold" -> {
 						if (parts.length != 2) {
-							throw error(i, "expected: hold <button[,button...]>, followed by an eight-space-indented time line.");
+							throw error(i, "expected: hold <button[,button...]>, followed by an eight-space-indented time [ticks], CordA [x y z], or CordR [x y z] [x y z] line.");
 						}
 						Set<Button> buttons = parseButtonsAtLine(parts[1], i);
 						int holdLine = i++;
@@ -116,16 +118,22 @@ public final class PlanParser {
 						if (i >= lines.length || !lines[i].startsWith("        ")
 								|| lines[i].indexOf('\t') >= 0
 								|| lines[i].substring(8).startsWith(" ")) {
-							throw error(holdLine, "hold must be followed by time <ticks> indented with eight spaces.");
+							throw error(holdLine, "hold must be followed by time [ticks], CordA [x y z], or CordR [x y z] [x y z] indented with eight spaces.");
 						}
-						String timeLine = withoutComment(lines[i]).substring(8).strip();
-						String[] timeParts = timeLine.split("\\s+");
-						if (timeParts.length != 2 || !timeParts[0].equalsIgnoreCase("time")) {
-							throw error(i, "expected: time <ticks>.");
+						String optionLine = withoutComment(lines[i]).substring(8).strip();
+						String[] optionParts = splitOptions(optionLine);
+						switch (optionParts[0].toLowerCase(Locale.ROOT)) {
+							case "time" -> {
+								int ticks = parseTicksAtLine(optionParts, 1, i, "time [ticks]");
+								concurrentActions.add(new PlanAction.Press(buttons, ticks));
+								concurrentDuration = Math.max(concurrentDuration, ticks);
+							}
+							case "corda" -> concurrentActions.add(new PlanAction.CoordinatePress(
+									buttons, parseCordAAtLine(optionParts, i)));
+							case "cordr" -> concurrentActions.add(new PlanAction.CoordinatePress(
+									buttons, parseCordRAtLine(optionParts, i)));
+							default -> throw error(i, "expected: time [ticks], CordA [x y z], or CordR [x y z] [x y z].");
 						}
-						int ticks = parseTicksAtLine(timeParts, 1, i, "time <ticks>");
-						concurrentActions.add(new PlanAction.Press(buttons, ticks));
-						concurrentDuration = Math.max(concurrentDuration, ticks);
 						i++;
 						totalActions++;
 					}
@@ -145,7 +153,7 @@ public final class PlanParser {
 					case "look" -> {
 						PlanAction.Look look;
 						try {
-							look = parseLook(parts);
+							look = parseGroupedLook(parts, i);
 						} catch (IllegalArgumentException exception) {
 							throw error(i, exception.getMessage());
 						}
@@ -163,7 +171,7 @@ public final class PlanParser {
 							if (rawModifier.indexOf('\t') >= 0 || rawModifier.substring(8).startsWith(" ")) {
 								throw error(modifierLine, "look modifiers must use exactly eight leading spaces.");
 							}
-							String[] modifier = rawModifier.substring(8).strip().split("\\s+");
+							String[] modifier = splitOptions(rawModifier.substring(8).strip());
 							switch (modifier[0].toLowerCase(Locale.ROOT)) {
 								case "pers" -> {
 									if (persistentId != null) {
@@ -179,12 +187,12 @@ public final class PlanParser {
 										throw error(modifierLine, "look can only have one rand modifier.");
 									}
 									if (modifier.length != 4) {
-										throw error(modifierLine, "expected: rand <yaw-range> <pitch-range> <speed-ticks>.");
+										throw error(modifierLine, "expected: rand [yaw-range] [pitch-range] [speed-ticks].");
 									}
 									try {
-										float yawRange = parseFiniteFloat(modifier[1], "yaw range");
-										float pitchRange = parseFiniteFloat(modifier[2], "pitch range");
-										int speedTicks = parseTicks(modifier[3]);
+										float yawRange = parseBracketedFloat(modifier[1], "yaw range");
+										float pitchRange = parseBracketedFloat(modifier[2], "pitch range");
+										int speedTicks = parseBracketedTicks(modifier[3]);
 										if (yawRange < 0 || yawRange > 180) {
 											throw new IllegalArgumentException("yaw range must be between 0 and 180 degrees.");
 										}
@@ -196,7 +204,7 @@ public final class PlanParser {
 										throw error(modifierLine, exception.getMessage());
 									}
 								}
-								default -> throw error(modifierLine, "expected a look modifier: pers [id] or rand <yaw-range> <pitch-range> <speed-ticks>.");
+								default -> throw error(modifierLine, "expected a look modifier: pers [id] or rand [yaw-range] [pitch-range] [speed-ticks].");
 							}
 							i = modifierLine + 1;
 						}
@@ -256,6 +264,54 @@ public final class PlanParser {
 			throw new IllegalArgumentException("pitch must be between -90 and 90 degrees.");
 		}
 		return new PlanAction.Look(yaw, pitch);
+	}
+
+	private static PlanAction.Look parseGroupedLook(String[] parts, int line) throws PlanParseException {
+		if (parts.length != 2) {
+			throw error(line, "expected: look [yaw pitch].");
+		}
+		float[] angles = parseBracketedVector(parts[1], 2, "look angles", line);
+		if (angles[1] < -90 || angles[1] > 90) {
+			throw error(line, "pitch must be between -90 and 90 degrees.");
+		}
+		return new PlanAction.Look(angles[0], angles[1]);
+	}
+
+	private static PlanAction.CordA parseCordAAtLine(String[] parts, int line) throws PlanParseException {
+		if (parts.length != 2) {
+			throw error(line, "expected: CordA [x y z].");
+		}
+		String[] coordinates = parseBracketedValues(parts[1], 3, "CordA coordinates", line);
+		int[] parsed = new int[3];
+		try {
+			for (int i = 0; i < parsed.length; i++) {
+				parsed[i] = Integer.parseInt(coordinates[i]);
+			}
+		} catch (NumberFormatException exception) {
+			throw error(line, "CordA coordinates must be whole numbers in the integer range.");
+		}
+		return new PlanAction.CordA(parsed[0], parsed[1], parsed[2]);
+	}
+
+	private static PlanAction.CordR parseCordRAtLine(String[] parts, int line) throws PlanParseException {
+		if (parts.length != 3) {
+			throw error(line, "expected: CordR [x y z] [x y z].");
+		}
+		String[] firstValues = parseBracketedValues(parts[1], 3, "CordR coordinates", line);
+		String[] secondValues = parseBracketedValues(parts[2], 3, "CordR coordinates", line);
+		double[] first = new double[3];
+		double[] second = new double[3];
+		try {
+			for (int i = 0; i < 3; i++) {
+				first[i] = parseFiniteDouble(firstValues[i], "CordR coordinate");
+				second[i] = parseFiniteDouble(secondValues[i], "CordR coordinate");
+			}
+		} catch (IllegalArgumentException exception) {
+			throw error(line, exception.getMessage());
+		}
+		return new PlanAction.CordR(
+				Math.min(first[0], second[0]), Math.min(first[1], second[1]), Math.min(first[2], second[2]),
+				Math.max(first[0], second[0]), Math.max(first[1], second[1]), Math.max(first[2], second[2]));
 	}
 
 	private static PlanAction parseMove(String[] parts) {
@@ -321,10 +377,64 @@ public final class PlanParser {
 			throw error(line, "expected: " + syntax + ".");
 		}
 		try {
-			return parseTicks(parts[valueIndex]);
+			return parseBracketedTicks(parts[valueIndex]);
 		} catch (IllegalArgumentException exception) {
 			throw error(line, exception.getMessage());
 		}
+	}
+
+	private static int parseBracketedTicks(String value) {
+		return parseTicks(parseBracketedScalar(value, "ticks"));
+	}
+
+	private static float parseBracketedFloat(String value, String name) {
+		return parseFiniteFloat(parseBracketedScalar(value, name), name);
+	}
+
+	private static String parseBracketedScalar(String value, String name) {
+		if (!value.matches("\\[[^\\[\\]]+]")) {
+			throw new IllegalArgumentException(name + " must use square brackets.");
+		}
+		String contents = value.substring(1, value.length() - 1).strip();
+		if (contents.isEmpty() || contents.matches(".*\\s+.*")) {
+			throw new IllegalArgumentException(name + " must contain one value in square brackets.");
+		}
+		return contents;
+	}
+
+	private static float[] parseBracketedVector(String value, int expected, String name, int line)
+			throws PlanParseException {
+		String[] coordinates = parseBracketedValues(value, expected, name, line);
+		float[] parsed = new float[expected];
+		try {
+			for (int i = 0; i < expected; i++) {
+				parsed[i] = parseFiniteFloat(coordinates[i], name);
+			}
+		} catch (IllegalArgumentException exception) {
+			throw error(line, exception.getMessage());
+		}
+		return parsed;
+	}
+
+	private static String[] parseBracketedValues(String value, int expected, String name, int line)
+			throws PlanParseException {
+		if (!value.startsWith("[") || !value.endsWith("]")) {
+			throw error(line, name + " must use square brackets.");
+		}
+		String[] coordinates = value.substring(1, value.length() - 1).strip().split("\\s+");
+		if (coordinates.length != expected || coordinates[0].isEmpty()) {
+			throw error(line, name + " must contain exactly " + expected + " values.");
+		}
+		return coordinates;
+	}
+
+	private static String[] splitOptions(String line) {
+		List<String> options = new ArrayList<>();
+		Matcher matcher = OPTION_TOKEN.matcher(line);
+		while (matcher.find()) {
+			options.add(matcher.group());
+		}
+		return options.toArray(String[]::new);
 	}
 
 	private static int parseTicks(String value) {
@@ -354,6 +464,18 @@ public final class PlanParser {
 		try {
 			float number = Float.parseFloat(value);
 			if (!Float.isFinite(number)) {
+				throw new IllegalArgumentException(name + " must be a finite number.");
+			}
+			return number;
+		} catch (NumberFormatException exception) {
+			throw new IllegalArgumentException(name + " must be a number.");
+		}
+	}
+
+	private static double parseFiniteDouble(String value, String name) {
+		try {
+			double number = Double.parseDouble(value);
+			if (!Double.isFinite(number)) {
 				throw new IllegalArgumentException(name + " must be a finite number.");
 			}
 			return number;

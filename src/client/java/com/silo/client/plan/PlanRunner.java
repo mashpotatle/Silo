@@ -166,7 +166,7 @@ public final class PlanRunner {
 			return;
 		}
 
-		if (remainingTicks == 0) {
+		if (remainingTicks == 0 && activeGroup == null) {
 			activateNextAction(client);
 			if (!running) {
 				return;
@@ -179,13 +179,18 @@ public final class PlanRunner {
 		updatePersistentLook(client.player);
 		applyControlledButtons(client.options);
 		processAttack(client);
-		remainingTicks--;
+		if (remainingTicks > 0) {
+			remainingTicks--;
+		}
 		if (activeGroup != null) {
 			groupElapsedTicks++;
 		}
-		if (remainingTicks == 0) {
+		if (activeGroup != null && groupComplete(client.player)) {
 			actionIndex++;
 			activeGroup = null;
+			activeButtons = Set.of();
+		} else if (activeGroup == null && remainingTicks == 0) {
+			actionIndex++;
 			activeButtons = Set.of();
 		}
 	}
@@ -295,9 +300,26 @@ public final class PlanRunner {
 		for (PlanAction action : group.actions()) {
 			if (action instanceof PlanAction.Press press && groupActionElapsed < press.ticks()) {
 				buttons.addAll(press.buttons());
+			} else if (action instanceof PlanAction.CoordinatePress press
+					&& !press.target().reached(client.player.getX(), client.player.getY(), client.player.getZ())) {
+				buttons.addAll(press.buttons());
 			}
 		}
 		return Set.copyOf(buttons);
+	}
+
+	private boolean groupComplete(LocalPlayer player) {
+		PlanAction.ActionGroup group = activeGroup;
+		if (group == null || groupElapsedTicks < group.durationTicks()) {
+			return false;
+		}
+		for (PlanAction action : group.actions()) {
+			if (action instanceof PlanAction.CoordinatePress press
+					&& !press.target().reached(player.getX(), player.getY(), player.getZ())) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private void updatePersistentLook(LocalPlayer player) {

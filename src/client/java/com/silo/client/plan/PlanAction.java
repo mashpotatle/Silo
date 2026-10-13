@@ -6,7 +6,7 @@ import java.util.Optional;
 import java.util.Set;
 
 public sealed interface PlanAction permits PlanAction.Look, PlanAction.PersistentLook, PlanAction.EndLook,
-		PlanAction.Press, PlanAction.Wait, PlanAction.ActionGroup {
+		PlanAction.Press, PlanAction.CoordinatePress, PlanAction.Wait, PlanAction.ActionGroup {
 	record Look(float yaw, float pitch) implements PlanAction {
 	}
 
@@ -31,6 +31,32 @@ public sealed interface PlanAction permits PlanAction.Look, PlanAction.Persisten
 	}
 
 	record Press(Set<Button> buttons, int ticks) implements PlanAction {
+	}
+
+	record CoordinatePress(Set<Button> buttons, CoordinateTarget target) implements PlanAction {
+	}
+
+	sealed interface CoordinateTarget permits CordA, CordR {
+		boolean reached(double x, double y, double z);
+	}
+
+	record CordA(int x, int y, int z) implements CoordinateTarget {
+		@Override
+		public boolean reached(double playerX, double playerY, double playerZ) {
+			return Math.floor(playerX) == x
+					&& Math.floor(playerY) == y
+					&& Math.floor(playerZ) == z;
+		}
+	}
+
+	record CordR(double minX, double minY, double minZ, double maxX, double maxY, double maxZ)
+			implements CoordinateTarget {
+		@Override
+		public boolean reached(double x, double y, double z) {
+			return x >= minX && x <= maxX
+					&& y >= minY && y <= maxY
+					&& z >= minZ && z <= maxZ;
+		}
 	}
 
 	record Wait(int ticks) implements PlanAction {

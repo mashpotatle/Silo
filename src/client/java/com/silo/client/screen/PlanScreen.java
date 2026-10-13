@@ -33,7 +33,7 @@ public final class PlanScreen extends Screen {
 		editor = addRenderableWidget(MultiLineEditBox.builder()
 				.setX(left)
 				.setY(editorTop)
-				.setPlaceholder(Component.literal(":Action_1\n    look 180 8\n        pers [30]\n        rand 12 2 40\n:Action_2\n    end [30]"))
+				.setPlaceholder(Component.literal(":Action_1\n    look [180 8]\n        pers [30]\n        rand [12] [2] [100]\n:Action_2\n    hold left\n        CordA [34 64 -12]"))
 				.setShowDecorations(true)
 				.build(font, panelWidth, editorHeight, Component.literal("Plan actions")));
 		editor.setCharacterLimit(PlanParser.MAX_PLAN_LENGTH);
