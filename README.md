@@ -17,12 +17,12 @@ navigation or obstacle-aware pathfinding.
 ## Plan syntax
 
 Plans can use named `:Action_...` groups. Groups run in order; commands within a
-group run concurrently. Use exactly four spaces before commands and exactly
-eight spaces before a `time`, `CordA`, `CordR`, `pers`, or `rand` line. Numeric
-options in this format use square brackets. Use spaces, not tabs, in the
-Minecraft editor. Blank lines and text after `#` are ignored. Durations are in
-game ticks (20 ticks per second), with a maximum of 1,200 ticks per timed
-command.
+group run concurrently after its optional unindented `sleep [ticks]` delay.
+Use exactly four spaces before commands and exactly eight spaces before a
+`time`, `CordA`, `CordR`, `pers`, or `rand` line. Numeric options in this format
+use square brackets. Use spaces, not tabs, in the Minecraft editor. Blank lines
+and text after `#` are ignored. Durations are in game ticks (20 ticks per
+second), with a maximum of 1,200 ticks per timed command.
 
 ```text
 :Action_1
@@ -37,7 +37,7 @@ command.
         time [150]
 
 :Action_3 # Wait before starting these concurrent actions
-    sleep [20]
+sleep [20]
     hold left
         time [300]
     click attack

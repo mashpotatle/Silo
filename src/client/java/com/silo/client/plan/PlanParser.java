@@ -90,8 +90,20 @@ public final class PlanParser {
 				if (raw.indexOf('\t') >= 0) {
 					throw error(i, "use spaces for indentation, not tabs.");
 				}
+				if (raw.equals("sleep") || raw.startsWith("sleep ")) {
+					if (!raw.equals(raw.strip())) {
+						throw error(i, "sleep must be unindented and appear once before the concurrent actions.");
+					}
+					if (!concurrentActions.isEmpty() || sawSleep) {
+						throw error(i, "sleep must appear once before the concurrent actions.");
+					}
+					delayTicks = parseTicksAtLine(splitOptions(raw), 1, i, "sleep [ticks]");
+					sawSleep = true;
+					i++;
+					continue;
+				}
 				if (!raw.startsWith("    ")) {
-					throw error(i, "action lines must be indented with four spaces.");
+					throw error(i, "action lines must be indented with four spaces; sleep [ticks] must be unindented.");
 				}
 
 				String command = raw.substring(4).strip();
@@ -100,14 +112,6 @@ public final class PlanParser {
 				}
 				String[] parts = splitOptions(command);
 				switch (parts[0].toLowerCase(Locale.ROOT)) {
-					case "sleep" -> {
-						if (!concurrentActions.isEmpty() || sawSleep) {
-							throw error(i, "sleep must appear once before the concurrent actions.");
-						}
-						delayTicks = parseTicksAtLine(parts, 1, i, "sleep [ticks]");
-						sawSleep = true;
-						i++;
-					}
 					case "hold" -> {
 						if (parts.length != 2) {
 							throw error(i, "expected: hold <button[,button...]>, followed by an eight-space-indented time [ticks], CordA [x y z], or CordR [x y z] [x y z] line.");
